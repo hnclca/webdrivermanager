@@ -220,6 +220,7 @@ class WebDriverManagerBase:
         :returns: The path + filename to the downloaded web driver binary.
         """
         (download_url, filename) = self.get_download_url(version)
+        LOGGER.debug('Attempting to download from URL: %s', download_url)
 
         dl_path = self.get_download_path(version)
         filename_with_path = os.path.join(dl_path, filename)
@@ -338,6 +339,7 @@ class GeckoDriverManager(WebDriverManagerBase):
 
     gecko_driver_releases_url = 'https://api.github.com/repos/mozilla/geckodriver/releases/'
     fallback_url = 'https://github.com/mozilla/geckodriver/releases/'
+    download_base_url = "https://npm.taobao.org/mirrors/geckodriver/"
     driver_filenames = {
         'win': 'geckodriver.exe',
         'mac': 'geckodriver',
@@ -361,34 +363,42 @@ class GeckoDriverManager(WebDriverManagerBase):
         :returns: The download URL for the Gecko (Mozilla Firefox) driver binary.
         """
         if version == 'latest':
-            gecko_driver_version_release_url = self.gecko_driver_releases_url + version
-        else:
-            gecko_driver_version_release_url = self.gecko_driver_releases_url + 'tags/' + version
-        LOGGER.debug('Attempting to access URL: %s', gecko_driver_version_release_url)
-        response = requests.get(gecko_driver_version_release_url)
-        if response.ok:
-            url = self._parse_github_api_response(version, response)
-        elif response.status_code == 403:
-            url = self._parse_github_page(version)
-        else:
-            raise_runtime_error('Error, unable to get info for gecko driver {0} release. Status code: {1}. Error message: {2}'.format(version, response.status_code, response.text))
+            version = self._get_latest_version_with_github_page_fallback(self.gecko_driver_releases_url,
+                                                                     self.fallback_url, version)
+        LOGGER.debug('Attempting to download version: %s', version)
+        LOGGER.debug('Detected OS: %sbit %s', self.bitness, self.os_name)
 
-        return (url, os.path.split(urlparse(url).path)[1])
+        # mac不区分32位和64位，除win是zip扩展名外，其他都是tar.gz.
+        if self.os_name == 'win':
+            extension = 'zip'
+            local_bitness = self.bitness
+        elif self.os_name == 'mac':
+            local_bitness = 'os'
+            extension = "tar.gz"
+        else:
+            extension = "tar.gz"
+            local_bitness = self.bitness
+
+        filename_str = r'geckodriver-{0}-{1}{2}.{3}'.format(version,
+                                                            self.os_name, local_bitness, extension)
+        url = r'{url}{version}/{filename}'.format(url=self.download_base_url,
+                                                   version=version, filename=filename_str)
+        filename = os.path.basename(filename_str)
+        return (url, filename)
 
 
 class ChromeDriverManager(WebDriverManagerBase):
     """Class for downloading the Google Chrome WebDriver.
     """
 
-    chrome_driver_base_url = 'https://www.googleapis.com/storage/v1/b/chromedriver'
+    latest_release_version_url = 'http://chromedriver.storage.googleapis.com/LATEST_RELEASE'
+    download_base_url = "https://npm.taobao.org/mirrors/chromedriver/"
 
     def _get_latest_version_number(self):
-        resp = requests.get(self.chrome_driver_base_url + '/o/LATEST_RELEASE')
+        resp = requests.get(self.latest_release_version_url)
         if resp.status_code != 200:
             raise_runtime_error('Error, unable to get version number for latest release, got code: {0}'.format(resp.status_code))
-
-        latest_release = requests.get(resp.json()['mediaLink'])
-        return latest_release.text
+        return resp.text
 
     driver_filenames = {
         'win': 'chromedriver.exe',
@@ -417,7 +427,6 @@ class ChromeDriverManager(WebDriverManagerBase):
 
         LOGGER.debug('Detected OS: %sbit %s', self.bitness, self.os_name)
 
-        chrome_driver_objects = requests.get(self.chrome_driver_base_url + '/o').json()
         # chromedriver only has 64 bit versions of mac and 32bit versions of windows. For now.
         if self.os_name == 'win':
             local_bitness = '32'
@@ -426,14 +435,10 @@ class ChromeDriverManager(WebDriverManagerBase):
         else:
             local_bitness = self.bitness
 
-        matcher = r'{0}/.*{1}{2}.*'.format(version, self.os_name, local_bitness)
-
-        entry = [obj for obj in chrome_driver_objects['items'] if re.match(matcher, obj['name'])]
-        if not entry:
-            raise_runtime_error('Error, unable to find appropriate download for {0}{1}.'.format(self.os_name, self.bitness))
-
-        url = entry[0]['mediaLink']
-        filename = os.path.basename(entry[0]['name'])
+        filename_str = r'chromedriver_{0}{1}.zip'.format(self.os_name, local_bitness)
+        url = r'{url}{version}/{filename}'.format(url=self.download_base_url,
+                                                   version=version, filename=filename_str)
+        filename = os.path.basename(filename_str)
         return (url, filename)
 
 
@@ -443,6 +448,7 @@ class OperaChromiumDriverManager(WebDriverManagerBase):
 
     opera_chromium_driver_releases_url = 'https://api.github.com/repos/operasoftware/operachromiumdriver/releases/'
     fallback_url = 'https://github.com/operasoftware/operachromiumdriver/releases/'
+    download_base_url = "https://npm.taobao.org/mirrors/operadriver/"
     driver_filenames = {
         'win': 'operadriver.exe',
         'mac': 'operadriver',
@@ -466,19 +472,16 @@ class OperaChromiumDriverManager(WebDriverManagerBase):
         :returns: The download URL for the Opera Chromium driver binary.
         """
         if version == 'latest':
-            opera_chromium_driver_version_release_url = self.opera_chromium_driver_releases_url + version
-        else:
-            opera_chromium_driver_version_release_url = self.opera_chromium_driver_releases_url + 'tags/' + version
-        LOGGER.debug('Attempting to access URL: %s', opera_chromium_driver_version_release_url)
-        response = requests.get(opera_chromium_driver_version_release_url)
-        if response.ok:
-            url = self._parse_github_api_response(version, response)
-        elif response.status_code == 403:
-            url = self._parse_github_page(version)
-        else:
-            raise_runtime_error('Error, unable to get info for opera chromium driver {0} release. Status code: {1}. Error message: {2}'.format(version, response.status_code, response.text))
+            version = self._get_latest_version_with_github_page_fallback(self.opera_chromium_driver_releases_url,
+                                                                     self.fallback_url, version).replace("v", "")
+        LOGGER.debug('Attempting to download version: %s', version)
+        LOGGER.debug('Detected OS: %sbit %s', self.bitness, self.os_name)
 
-        return (url, os.path.split(urlparse(url).path)[1])
+        filename_str = r'operadriver_{0}{1}.zip'.format(self.os_name, self.bitness)
+        url = r'{url}{version}/{filename}'.format(url=self.download_base_url,
+                                                   version=version, filename=filename_str)
+        filename = os.path.basename(filename_str)
+        return (url, filename)
 
 
 class EdgeDriverManager(WebDriverManagerBase):
@@ -617,8 +620,6 @@ class IEDriverManager(WebDriverManagerBase):
         local_osname = self.os_name
         if self.bitness == "64":
             local_osname = "x"
-        elif self.bitness == "32":
-            local_osname = "Win"
         matcher = r'.*/.*_{0}{1}_{2}'.format(local_osname, self.bitness, version)
         entry = [entry for entry in self._drivers if re.match(matcher, entry)]
 
@@ -710,3 +711,8 @@ AVAILABLE_DRIVERS = {
     'edgechromium': EdgeChromiumDriverManager,
     'ie': IEDriverManager,
 }
+
+if __name__ == "__main__":
+    driver = GeckoDriverManager()
+    (downloadurl, filename) = driver.get_download_url()
+    print(downloadurl)
